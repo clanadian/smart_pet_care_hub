@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "clcd.h"
 /* USER CODE END Includes */
 
@@ -42,6 +43,7 @@
 
 #define ARR_CNT 5
 #define CMD_SIZE 50
+#define MAX_DEVICES 1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -66,10 +68,26 @@ volatile uint8_t emg_state = 0; // 비상 상태 플래그
 volatile int menuPage = 1;      // LCD 페이지 번호 (리모컨 제어용)
 volatile uint8_t emg_btn_flag = 0;  
 
+
+
 // 내부 시계용 변수
 int sys_hour = 0;
 int sys_min = 0;
 int sys_sec = 0;
+
+volatile uint32_t last_scroll_tick = 0;
+
+// 🌟 [추가됨] 센서 데이터를 담을 구조체 정의
+typedef struct {
+    int water;
+    int temp;
+    int humi;
+    int sound;
+} SENSOR_NODE;
+
+// 🌟 [추가됨] 구조체 배열 선언 (모든 값 0으로 초기화됨)
+// 현재는 MAX_DEVICES가 1이므로 sensor_node[0] 만 사용합니다.
+volatile SENSOR_NODE sensor_node[MAX_DEVICES] = {0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -132,18 +150,23 @@ int main(void)
   // 💡 부팅 시 초록색 LED 기본 점등
   HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET); 
   
-  printf("STM32 Control Panel Start!\r\n");
+  // 🌟 [여기에 추가] 부팅/이닛 완료 직후 라즈베리 파이에게 시간 요청 패킷 송신
+  char time_req[] = "[STM32]@TIME_REQ\n";
+  HAL_UART_Transmit(&huart6, (uint8_t*)time_req, strlen(time_req), 100);
+  
+  printf("STM32 Control Panel Start! Time Requested.\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   uint32_t last_clock_tick = 0; // 시계 카운트용 타이머
+  last_scroll_tick = HAL_GetTick(); // 부팅 직후 타이머 초기화
 
   while (1)
   {
       uint32_t current_tick = HAL_GetTick();
 
-      // 🌟 [내부 시계 로직] 1000ms(1초)마다 실행
+      // 🌟 1. [내부 시계 로직] 1000ms(1초)마다 실행
       if (current_tick - last_clock_tick >= 1000)
       {
           sys_sec++;
@@ -153,25 +176,38 @@ int main(void)
           
           last_clock_tick = current_tick; // 타이머 갱신
           
-          // 시간이 바뀔 때마다 LCD 업데이트 (비상 상황이 아닐 때만)
           if(emg_state == 0) {
               update_LCD(); 
           }
       }
 
-      // 1. 블루투스 데이터가 들어왔을 때 처리
+      // 🌟 2. [추가된 로직] 3000ms(3초)마다 LCD 페이지 자동 스크롤
+      if (current_tick - last_scroll_tick >= 3000)
+      {
+          last_scroll_tick = current_tick; // 타이머 갱신
+          
+          if(emg_state == 0) // 비상 상황이 아닐 때만 스크롤
+          {
+              menuPage++;
+              if(menuPage > 3) menuPage = 1; // 1~3페이지 반복
+              update_LCD(); // 페이지가 넘어갔으니 즉각 화면 갱신
+          }
+      }
+
+      // 3. 블루투스 데이터가 들어왔을 때 처리
       if(btFlag)
       {
           bluetooth_Event();
           btFlag = 0;
       }
       
-      // 2. 평상시 상태일 때 LCD 화면 업데이트
+      // 4. 평상시 상태일 때 LCD 화면 업데이트
       if(emg_state == 0)
       {
           update_LCD();
       }
 
+      // 5. 비상 버튼 처리
       if(emg_btn_flag)
       {
           emergency_Trigger();
@@ -415,6 +451,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                     menuPage++;
                     if(menuPage > 3) menuPage = 1;
                     printf("IR Triggered: Page %d\r\n", menuPage);
+
+                    last_scroll_tick = HAL_GetTick();
                 }
                 last_ir_time = current_time;
             }
@@ -431,26 +469,39 @@ void bluetooth_Event()
     char * pToken;
     char * pArray[ARR_CNT]={0};
     char recvBuf[CMD_SIZE]={0};
+    char *endptr;
     
     strcpy(recvBuf, btData);
-    printf("BT Recv: %s\r\n", recvBuf); // 디버그용 PC 출력
+    printf("BT Recv: %s\r\n", recvBuf);
 
     // "[@]" 단위로 패킷 쪼개기
-    pToken = strtok(recvBuf,"[@]");
+    pToken = strtok(recvBuf,"[@]\n\r");
     while(pToken != NULL)
     {
         pArray[i] = pToken;
         if(++i >= ARR_CNT) break;
-        pToken = strtok(NULL,"[@]");
+        pToken = strtok(NULL,"[@]\n\r");
     }
 
-    // 명령어 배열이 비어있지 않은지 검사
-    if(pArray[1] != NULL && pArray[2] != NULL) 
+    if(pArray[1] != NULL) 
     {
-        // LED 제어 명령
-        if(!strcmp(pArray[1], "LED"))
+        // 💡 1. 센서 데이터 수신 (구조체 배열에 저장)
+        if(!strcmp(pArray[1], "SENSOR") && pArray[2] != NULL)
         {
-            // 모든 LED 일단 끄기
+            // 현재는 장치가 1개라고 가정하므로 인덱스 0에 무조건 저장합니다.
+            // (추후 pArray[0]에 있는 ID를 비교해서 인덱스를 분기하면 여러 장치 대응 가능!)
+            sensor_node[0].water = (int)strtol(pArray[2], &endptr, 10);
+            sensor_node[0].temp  = (int)strtol(pArray[3], &endptr, 10);
+            sensor_node[0].humi  = (int)strtol(pArray[4], &endptr, 10);
+            sensor_node[0].sound = (int)strtol(pArray[5], &endptr, 10);
+            
+            printf("Node[0] Updated: W:%d T:%d H:%d S:%d\r\n", 
+                   sensor_node[0].water, sensor_node[0].temp, 
+                   sensor_node[0].humi, sensor_node[0].sound);
+        }
+        // 2. LED 제어 명령
+        else if(!strcmp(pArray[1], "LED") && pArray[2] != NULL)
+        {
             HAL_GPIO_WritePin(RGB_R_GPIO_Port, RGB_R_Pin, GPIO_PIN_RESET);
             HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_RESET);
             HAL_GPIO_WritePin(RGB_B_GPIO_Port, RGB_B_Pin, GPIO_PIN_RESET);
@@ -459,26 +510,24 @@ void bluetooth_Event()
             if(!strcmp(pArray[2], "GREEN")) HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET);
             if(!strcmp(pArray[2], "BLUE"))  HAL_GPIO_WritePin(RGB_B_GPIO_Port, RGB_B_Pin, GPIO_PIN_SET);
         }
-        // 부저 제어 명령
-        else if(!strcmp(pArray[1], "BUZZER"))
+        // 3. 부저 제어 명령
+        else if(!strcmp(pArray[1], "BUZZER") && pArray[2] != NULL)
         {
             if(!strcmp(pArray[2], "ON")) HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
             if(!strcmp(pArray[2], "OFF")) HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
         }
-        // 비상 해제 명령 (서버에서 제어)
-        else if(!strcmp(pArray[1], "EMG") && !strcmp(pArray[2], "OFF"))
+        // 4. 비상 해제 명령 (서버에서 제어)
+        else if(!strcmp(pArray[1], "EMG") && pArray[2] != NULL && !strcmp(pArray[2], "OFF"))
         {
-            emg_state = 0; // 비상 해제
+            emg_state = 0; 
             HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
             HAL_GPIO_WritePin(RGB_R_GPIO_Port, RGB_R_Pin, GPIO_PIN_RESET);
-            LCD_writeStringXY(0,0, "System Restored ");
+            HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET); 
             printf("Emergency Cleared by Server\r\n");
         }
-        // (기존 LED, BUZZER 처리 코드 아래쪽에 추가)
-        else if(!strcmp(pArray[1], "TIME"))
+        // 5. 시간 동기화
+        else if(!strcmp(pArray[1], "TIME") && pArray[2] != NULL)
         {
-            // pArray[2]에 "14:30:00" 같은 문자열이 들어옴
-            // sscanf를 써서 숫자만 쏙쏙 빼서 변수에 저장!
             sscanf(pArray[2], "%d:%d:%d", &sys_hour, &sys_min, &sys_sec);
             printf("Time Synced: %02d:%02d:%02d\r\n", sys_hour, sys_min, sys_sec);
         }
@@ -539,22 +588,40 @@ void emergency_Trigger()
 // ----------------------------------------------------
 void update_LCD()
 {
-    // menuPage 변수에 따라 다른 화면을 그려줌
-    char lcd_buf[17]; // LCD 한 줄(16칸) 버퍼
+    // 💡 버퍼는 넉넉하게 32로 잡아서 컴파일 경고(Overflow)를 원천 차단!
+    char lcd_buf[32]; 
 
     if (menuPage == 1) {
-        // "Time: 14:30:05  " 형태로 문자열 만들기
-        sprintf(lcd_buf, "Time: %02d:%02d:%02d  ", sys_hour, sys_min, sys_sec);
-        LCD_writeStringXY(1,0, lcd_buf);
-        LCD_writeStringXY(0,0, "Page 1: Time    ");
+        // [ 12:34:56 ] 뒤에 공백 4칸을 직접 넣어서 총 16칸을 딱 맞춤
+        sprintf(lcd_buf, "[ %02d:%02d:%02d ]    ", sys_hour, sys_min, sys_sec);
+        LCD_writeStringXY(0, 0, lcd_buf);
+        
+        // T:25C H:60% 뒤에 공백 5칸을 직접 넣어서 총 16칸 딱 맞춤 (%2d로 숫자 2자리 고정)
+        sprintf(lcd_buf, "T:%2dC H:%2d%%     ", sensor_node[0].temp, sensor_node[0].humi);
+        LCD_writeStringXY(1, 0, lcd_buf);
     }
     else if (menuPage == 2) {
-        LCD_writeStringXY(0,0, "Page 2: Motor   ");
-        LCD_writeStringXY(1,0, "Status: READY   ");
+        // Water Lvl:30 뒤에 공백을 넣어서 16칸 딱 맞춤 (%-3d는 숫자를 왼쪽 정렬로 3칸 차지하게 함)
+        sprintf(lcd_buf, "Water Lvl:%-3d   ", sensor_node[0].water);
+        LCD_writeStringXY(0, 0, lcd_buf);
+        
+        if(sensor_node[0].sound == 1) {
+            sprintf(lcd_buf, "Sound: DETECTED "); // 딱 16글자
+        } else {
+            sprintf(lcd_buf, "Sound: NORMAL   "); // 딱 16글자 (뒤에 공백 3칸)
+        }
+        LCD_writeStringXY(1, 0, lcd_buf);
     }
     else if (menuPage == 3) {
-        LCD_writeStringXY(0,0, "Page 3: Network ");
-        LCD_writeStringXY(1,0, "BT: Connected   ");
+        sprintf(lcd_buf, "Network: BT OK  "); // 딱 16글자 (뒤에 공백 2칸)
+        LCD_writeStringXY(0, 0, lcd_buf);
+        
+        if(emg_state == 1) {
+            sprintf(lcd_buf, "System: LOCKED  "); // 딱 16글자 (뒤에 공백 2칸)
+        } else {
+            sprintf(lcd_buf, "System: READY   "); // 딱 16글자 (뒤에 공백 3칸)
+        }
+        LCD_writeStringXY(1, 0, lcd_buf);
     }
 }
 
