@@ -68,7 +68,11 @@ volatile uint8_t emg_state = 0; // 비상 상태 플래그
 volatile int menuPage = 1;      // LCD 페이지 번호 (리모컨 제어용)
 volatile uint8_t emg_btn_flag = 0;  
 
-
+// 🌟 [추가] 통신 및 센서 상태 모니터링용 변수
+volatile uint32_t last_bt_recv_tick = 0;     // 마지막 BT 데이터 수신 시간
+volatile uint32_t last_sensor_recv_tick = 0; // 마지막 센서 데이터 수신 시간
+volatile uint8_t is_bt_connected = 0;        // 0: 끊김(ERR), 1: 정상(OK)
+volatile uint8_t is_sensor_ok = 0;           // 0: 수신불량(ERR), 1: 정상(OK)
 
 // 내부 시계용 변수
 int sys_hour = 0;
@@ -166,6 +170,20 @@ int main(void)
   {
       uint32_t current_tick = HAL_GetTick();
 
+      // 🌟 [추가됨] 1. 연결 상태 지속 모니터링 (10초 룰)
+      if (current_tick - last_bt_recv_tick > 10000) is_bt_connected = 0;
+      if (current_tick - last_sensor_recv_tick > 10000) is_sensor_ok = 0;
+
+      // 🌟 [추가됨] 2. 상태 이상 발생 시, 페이지를 3페이지로 강제 고정
+      if (emg_state == 0 && (is_bt_connected == 0 || is_sensor_ok == 0)) 
+      {
+          if (menuPage != 3) {
+              menuPage = 3;  // 3페이지로 멱살 잡고 끌고 옴
+              update_LCD();  // 즉시 화면 갱신
+          }
+          last_scroll_tick = current_tick; // 타이머를 계속 묶어둠 -> 자동 스크롤 원천 차단!
+      }
+
       // 🌟 1. [내부 시계 로직] 1000ms(1초)마다 실행
       if (current_tick - last_clock_tick >= 1000)
       {
@@ -186,11 +204,12 @@ int main(void)
       {
           last_scroll_tick = current_tick; // 타이머 갱신
           
-          if(emg_state == 0) // 비상 상황이 아닐 때만 스크롤
+          // 💡 [수정됨] 비상 상황도 아니고, BT/센서도 모두 '정상(1)'일 때만 넘어감
+          if(emg_state == 0 && is_bt_connected == 1 && is_sensor_ok == 1)
           {
               menuPage++;
-              if(menuPage > 3) menuPage = 1; // 1~3페이지 반복
-              update_LCD(); // 페이지가 넘어갔으니 즉각 화면 갱신
+              if(menuPage > 2) menuPage = 1; 
+              update_LCD(); 
           }
       }
 
@@ -449,7 +468,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 if(emg_state == 0)
                 {
                     menuPage++;
-                    if(menuPage > 3) menuPage = 1;
+                    if(menuPage > 2) menuPage = 1;
                     printf("IR Triggered: Page %d\r\n", menuPage);
 
                     last_scroll_tick = HAL_GetTick();
@@ -474,6 +493,9 @@ void bluetooth_Event()
     strcpy(recvBuf, btData);
     printf("BT Recv: %s\r\n", recvBuf);
 
+    last_bt_recv_tick = HAL_GetTick(); 
+    is_bt_connected = 1;
+
     // "[@]" 단위로 패킷 쪼개기
     pToken = strtok(recvBuf,"[@]\n\r");
     while(pToken != NULL)
@@ -494,6 +516,10 @@ void bluetooth_Event()
             sensor_node[0].temp  = (int)strtol(pArray[3], &endptr, 10);
             sensor_node[0].humi  = (int)strtol(pArray[4], &endptr, 10);
             sensor_node[0].sound = (int)strtol(pArray[5], &endptr, 10);
+
+            // 🌟 [추가] 센서 데이터가 파싱까지 완벽히 성공했으므로 센서 정상 갱신!
+            last_sensor_recv_tick = HAL_GetTick();
+            is_sensor_ok = 1;
             
             printf("Node[0] Updated: W:%d T:%d H:%d S:%d\r\n", 
                    sensor_node[0].water, sensor_node[0].temp, 
@@ -613,13 +639,20 @@ void update_LCD()
         LCD_writeStringXY(1, 0, lcd_buf);
     }
     else if (menuPage == 3) {
-        sprintf(lcd_buf, "Network: BT OK  "); // 딱 16글자 (뒤에 공백 2칸)
+        // 🌟 1줄: 네트워크(블루투스) 상태 표시
+        if (is_bt_connected) sprintf(lcd_buf, "Network: BT OK  ");
+        else                 sprintf(lcd_buf, "Network: BT ERR!"); // 딱 16칸
         LCD_writeStringXY(0, 0, lcd_buf);
         
+        // 🌟 2줄: 시스템 & 센서 상태 표시
         if(emg_state == 1) {
-            sprintf(lcd_buf, "System: LOCKED  "); // 딱 16글자 (뒤에 공백 2칸)
-        } else {
-            sprintf(lcd_buf, "System: READY   "); // 딱 16글자 (뒤에 공백 3칸)
+            sprintf(lcd_buf, "System: LOCKED  ");
+        } 
+        else if (is_sensor_ok == 0) {
+            sprintf(lcd_buf, "System: SENS ERR"); // 센서값 안 들어오면 에러 표시
+        } 
+        else {
+            sprintf(lcd_buf, "System: READY   "); 
         }
         LCD_writeStringXY(1, 0, lcd_buf);
     }
