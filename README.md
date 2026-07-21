@@ -5,10 +5,10 @@
 <table>
   <tr>
     <td align="center">
-      https://github.com/user-attachments/assets/dec2b257-5a87-4198-93cc-e83e209e22f2<br>
+      https://github.com/user-attachments/assets/dec2b257-5a87-4198-93cc-e83e209e22f2
     </td>
     <td align="center">
-      https://github.com/user-attachments/assets/6c8bb603-cf40-448c-9c88-7b3a996089fc<br>
+      https://github.com/user-attachments/assets/6c8bb603-cf40-448c-9c88-7b3a996089fc
     </td>
   </tr>
 </table>
