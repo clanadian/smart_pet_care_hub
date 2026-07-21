@@ -2,16 +2,18 @@
 
 반려동물 단독 방치 시간이 늘어나면서 발생하는 돌봄 공백 문제를 해결하기 위한 IoT 기반 통합 펫 케어 시스템입니다. 환경 모니터링, 원격 급식, 비상 알림, 실시간 웹 대시보드를 하나로 통합하여 제공합니다.
 
+<table>
+  <tr>
+    <td align="center">
+      https://github.com/user-attachments/assets/dec2b257-5a87-4198-93cc-e83e209e22f2<br>
+    </td>
+    <td align="center">
+      https://github.com/user-attachments/assets/6c8bb603-cf40-448c-9c88-7b3a996089fc<br>
+    </td>
+  </tr>
+</table>
 
 ---
-
-
-https://github.com/user-attachments/assets/0708cab1-95fb-4007-b3f5-3e6aa84792fa
-
-
-
-https://github.com/user-attachments/assets/44b53d1f-c43d-41e0-8fe1-473bc4fb987e
-
 
 ## 1. 개발 배경
 
@@ -30,20 +32,9 @@ https://github.com/user-attachments/assets/44b53d1f-c43d-41e0-8fe1-473bc4fb987e
 
 ## 3. 시스템 구성도
 
-```
-Arduino UNO ──Wi-Fi──▶ Raspberry Pi 4 ◀──Wi-Fi(HTTP)── 웹 대시보드 (PC/태블릿)
-(센서 노드/제어)         (중앙 서버 & DB)
-     │                        │  │
-     │                     USB │  └──Bluetooth──▶ 안드로이드 앱 (원격 제어)
-     │                        ▼
-STM32 F411RE ◀──Bluetooth── USB 웹캠
-(실시간 모니터링)          (반려동물 실시간 촬영)
-```
-
-- **Arduino UNO**: 센서 데이터 수집, 급식 모터 제어 → Wi-Fi로 라즈베리파이에 전송
-- **Raspberry Pi 4**: 중앙 서버(Hub). 데이터 수집·저장(MariaDB), 웹캠 스트리밍, 웹/앱과의 통신 중계
-- **STM32 F411RE**: 라즈베리파이와 Bluetooth로 연결되어 실시간 상태 표시, 비상 알림(SOS) 버튼 담당
-- **웹 대시보드 / 안드로이드 앱**: 실시간 상태 확인 및 원격 제어
+<p align="center">
+  <img width="650" alt="시스템 구성도" src="https://github.com/user-attachments/assets/1298a818-b1dc-47b9-bd12-04f73e046270" />
+</p>
 
 ## 4. 디렉터리 구조
 
