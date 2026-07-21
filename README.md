@@ -5,6 +5,14 @@
 
 ---
 
+
+https://github.com/user-attachments/assets/0708cab1-95fb-4007-b3f5-3e6aa84792fa
+
+
+
+https://github.com/user-attachments/assets/44b53d1f-c43d-41e0-8fe1-473bc4fb987e
+
+
 ## 1. 개발 배경
 
 - 반려동물이 하루 평균 5시간 54분 혼자 있는 가구가 80%에 달함 (KB금융그룹, 『2025 한국반려동물보고서』)
