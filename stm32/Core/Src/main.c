@@ -34,7 +34,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-// printf 함수를 USART2(PC 디버그용 - NUCLEO 기본 USB)으로 연결하기 위한 매크로
+/* printf를 USART2(디버그용, NUCLEO 기본 USB)로 리다이렉트하기 위한 매크로 */
 #ifdef __GNUC__
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
 #else
@@ -58,30 +58,30 @@ UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart6;
 
 /* USER CODE BEGIN PV */
-// 블루투스 수신용 변수
+/* 블루투스 수신 관련 */
 uint8_t btchar;
 char btData[50];
 volatile unsigned char btFlag = 0;
 
-// 시스템 상태 변수
-volatile uint8_t emg_state = 0; // 비상 상태 플래그
-volatile int menuPage = 1;      // LCD 페이지 번호 (리모컨 제어용)
-volatile uint8_t emg_btn_flag = 0;  
+/* 시스템 상태 */
+volatile uint8_t emg_state = 0;      // 비상 상태 플래그
+volatile int menuPage = 1;           // LCD 페이지 번호 (리모컨 제어용)
+volatile uint8_t emg_btn_flag = 0;
 
-// 🌟 [추가] 통신 및 센서 상태 모니터링용 변수
-volatile uint32_t last_bt_recv_tick = 0;     // 마지막 BT 데이터 수신 시간
-volatile uint32_t last_sensor_recv_tick = 0; // 마지막 센서 데이터 수신 시간
-volatile uint8_t is_bt_connected = 0;        // 0: 끊김(ERR), 1: 정상(OK)
-volatile uint8_t is_sensor_ok = 0;           // 0: 수신불량(ERR), 1: 정상(OK)
+/* 통신 및 센서 상태 모니터링 */
+volatile uint32_t last_bt_recv_tick = 0;     // 마지막 BT 데이터 수신 시각
+volatile uint32_t last_sensor_recv_tick = 0; // 마지막 센서 데이터 수신 시각
+volatile uint8_t is_bt_connected = 0;        // 0: 끊김, 1: 정상
+volatile uint8_t is_sensor_ok = 0;           // 0: 수신불량, 1: 정상
 
-// 내부 시계용 변수
+/* 내부 시계 */
 int sys_hour = 0;
 int sys_min = 0;
 int sys_sec = 0;
 
 volatile uint32_t last_scroll_tick = 0;
 
-// 🌟 [추가됨] 센서 데이터를 담을 구조체 정의
+/* 센서 데이터 구조체 (현재 MAX_DEVICES=1이므로 sensor_node[0]만 사용) */
 typedef struct {
     int water;
     int temp;
@@ -89,8 +89,6 @@ typedef struct {
     int sound;
 } SENSOR_NODE;
 
-// 🌟 [추가됨] 구조체 배열 선언 (모든 값 0으로 초기화됨)
-// 현재는 MAX_DEVICES가 1이므로 sensor_node[0] 만 사용합니다.
 volatile SENSOR_NODE sensor_node[MAX_DEVICES] = {0};
 /* USER CODE END PV */
 
@@ -142,98 +140,97 @@ int main(void)
   MX_I2C1_Init();
   MX_USART2_UART_Init();
   MX_USART6_UART_Init();
-  
+
   /* USER CODE BEGIN 2 */
-  // 1. 블루투스(USART6) 수신 인터럽트 가동
+  // 블루투스(USART6) 수신 인터럽트 가동
   HAL_UART_Receive_IT(&huart6, &btchar, 1);
 
-  // 2. LCD 초기화 (I2C1 사용)
-  LCD_init(&hi2c1); 
+  // LCD 초기화 (I2C1)
+  LCD_init(&hi2c1);
   LCD_writeStringXY(0,0, "System Ready");
-  
-  // 💡 부팅 시 초록색 LED 기본 점등
-  HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET); 
-  
-  // 🌟 [여기에 추가] 부팅/이닛 완료 직후 라즈베리 파이에게 시간 요청 패킷 송신
+
+  // 부팅 시 초록 LED 기본 점등
+  HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET);
+
+  // 부팅 완료 직후 라즈베리파이에 시간 요청 패킷 송신
   char time_req[] = "[STM32]@TIME_REQ\n";
   HAL_UART_Transmit(&huart6, (uint8_t*)time_req, strlen(time_req), 100);
-  
+
   printf("STM32 Control Panel Start! Time Requested.\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  uint32_t last_clock_tick = 0; // 시계 카운트용 타이머
+  uint32_t last_clock_tick = 0;     // 내부 시계용 타이머
   last_scroll_tick = HAL_GetTick(); // 부팅 직후 타이머 초기화
 
   while (1)
   {
       uint32_t current_tick = HAL_GetTick();
 
-      // 🌟 [추가됨] 1. 연결 상태 지속 모니터링 (10초 룰)
+      // 1. 연결 상태 모니터링 (10초 이상 미수신 시 끊김 처리)
       if (current_tick - last_bt_recv_tick > 10000) is_bt_connected = 0;
       if (current_tick - last_sensor_recv_tick > 10000) is_sensor_ok = 0;
 
-      // 🌟 [추가됨] 2. 상태 이상 발생 시, 페이지를 3페이지로 강제 고정
-      if (emg_state == 0 && (is_bt_connected == 0 || is_sensor_ok == 0)) 
+      // 2. 통신/센서 이상 시 3페이지(상태 화면)로 강제 고정
+      if (emg_state == 0 && (is_bt_connected == 0 || is_sensor_ok == 0))
       {
           if (menuPage != 3) {
-              menuPage = 3;  // 3페이지로 멱살 잡고 끌고 옴
-              update_LCD();  // 즉시 화면 갱신
+              menuPage = 3;
+              update_LCD();
           }
-          last_scroll_tick = current_tick; // 타이머를 계속 묶어둠 -> 자동 스크롤 원천 차단!
+          last_scroll_tick = current_tick; // 자동 스크롤 방지
       }
 
-      // 🌟 1. [내부 시계 로직] 1000ms(1초)마다 실행
+      // 3. 내부 시계 (1초마다 갱신)
       if (current_tick - last_clock_tick >= 1000)
       {
           sys_sec++;
           if (sys_sec >= 60) { sys_sec = 0; sys_min++; }
           if (sys_min >= 60) { sys_min = 0; sys_hour++; }
           if (sys_hour >= 24) { sys_hour = 0; }
-          
-          last_clock_tick = current_tick; // 타이머 갱신
-          
-          if(emg_state == 0) {
-              update_LCD(); 
+
+          last_clock_tick = current_tick;
+
+          if (emg_state == 0) {
+              update_LCD();
           }
       }
 
-      // 🌟 2. [추가된 로직] 3000ms(3초)마다 LCD 페이지 자동 스크롤
+      // 4. LCD 페이지 자동 스크롤 (3초마다, 정상 상태일 때만)
       if (current_tick - last_scroll_tick >= 3000)
       {
-          last_scroll_tick = current_tick; // 타이머 갱신
-          
-          // 💡 [수정됨] 비상 상황도 아니고, BT/센서도 모두 '정상(1)'일 때만 넘어감
-          if(emg_state == 0 && is_bt_connected == 1 && is_sensor_ok == 1)
+          last_scroll_tick = current_tick;
+
+          if (emg_state == 0 && is_bt_connected == 1 && is_sensor_ok == 1)
           {
               menuPage++;
-              if(menuPage > 2) menuPage = 1; 
-              update_LCD(); 
+              if (menuPage > 2) menuPage = 1;
+              update_LCD();
           }
       }
 
-      // 3. 블루투스 데이터가 들어왔을 때 처리
-      if(btFlag)
+      // 5. 블루투스 수신 데이터 처리
+      if (btFlag)
       {
           bluetooth_Event();
           btFlag = 0;
       }
-      
-      // 4. 평상시 상태일 때 LCD 화면 업데이트
-      if(emg_state == 0)
+
+      // 6. 평상시 LCD 갱신
+      if (emg_state == 0)
       {
           update_LCD();
       }
 
-      // 5. 비상 버튼 처리
-      if(emg_btn_flag)
+      // 7. 비상 버튼 처리
+      if (emg_btn_flag)
       {
           emergency_Trigger();
           emg_btn_flag = 0;
       }
 
-      HAL_Delay(200); // 루프 안정화를 위한 딜레이
+      HAL_Delay(200); // 루프 안정화 딜레이
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -310,7 +307,7 @@ static void MX_I2C1_Init(void)
 }
 
 /**
-  * @brief USART2 Initialization Function (Debug PC용 - 115200 bps)
+  * @brief USART2 Initialization Function (디버그 PC용, 115200 bps)
   * @param None
   * @retval None
   */
@@ -331,7 +328,7 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
-  * @brief USART6 Initialization Function (Bluetooth 통신용 - 9600 bps)
+  * @brief USART6 Initialization Function (블루투스 통신용, 9600 bps)
   * @param None
   * @retval None
   */
@@ -417,16 +414,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-// ----------------------------------------------------
 // [1] 블루투스 수신 인터럽트 처리 (1바이트씩 받아 문자열 완성)
-// ----------------------------------------------------
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    if(huart->Instance == USART6) // 블루투스 모듈 (ZS-040)
+    if (huart->Instance == USART6) // 블루투스 모듈 (ZS-040)
     {
-        static int i=0;
+        static int i = 0;
         btData[i] = btchar;
-        if((btData[i] == '\n') || (btData[i] == '\r')) // 종료 문자 인식
+        if ((btData[i] == '\n') || (btData[i] == '\r')) // 종료 문자
         {
             btData[i] = '\0';
             btFlag = 1;
@@ -435,124 +430,114 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         else
         {
             i++;
-            if(i >= 50) i = 0; // 버퍼 오버플로우 방지
+            if (i >= 50) i = 0; // 버퍼 오버플로우 방지
         }
-        // 다음 문자 수신 대기
         HAL_UART_Receive_IT(&huart6, &btchar, 1);
     }
 }
 
-// ----------------------------------------------------
-// [2] 외부 물리버튼 & 리모컨 하드웨어 인터럽트 처리 (디바운스 적용)
-// ----------------------------------------------------
-    void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+// [2] 외부 버튼 & 리모컨 하드웨어 인터럽트 처리 (디바운스 적용)
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    uint32_t current_time = HAL_GetTick();
+
+    if (GPIO_Pin == EMG_BUTTON_Pin)
     {
-        uint32_t current_time = HAL_GetTick();
+        static uint32_t last_btn_time = 0;
 
-        if (GPIO_Pin == EMG_BUTTON_Pin)
+        if (current_time - last_btn_time > 500) // 500ms 디바운스
         {
-            static uint32_t last_btn_time = 0;
-
-            if (current_time - last_btn_time > 500)  // 500ms 디바운스
-            {
-                // GPIO_PIN_RESET 조건 제거 - falling edge이므로 이미 눌린 것
-                emg_btn_flag = 1;  // ← 플래그만 세우기
-                last_btn_time = current_time;
-            }
-        }
-        else if (GPIO_Pin == IR_REMOTE_Pin)
-        {
-            static uint32_t last_ir_time = 0;
-            if (current_time - last_ir_time > 200)
-            {
-                if(emg_state == 0)
-                {
-                    menuPage++;
-                    if(menuPage > 2) menuPage = 1;
-                    printf("IR Triggered: Page %d\r\n", menuPage);
-
-                    last_scroll_tick = HAL_GetTick();
-                }
-                last_ir_time = current_time;
-            }
+            emg_btn_flag = 1;
+            last_btn_time = current_time;
         }
     }
+    else if (GPIO_Pin == IR_REMOTE_Pin)
+    {
+        static uint32_t last_ir_time = 0;
+        if (current_time - last_ir_time > 200)
+        {
+            if (emg_state == 0)
+            {
+                menuPage++;
+                if (menuPage > 2) menuPage = 1;
+                printf("IR Triggered: Page %d\r\n", menuPage);
 
-// ----------------------------------------------------
-// [3] 교수님 로직 기반: 블루투스 패킷 파싱 및 명령 실행
-//     예: [RASP]@LED@RED\n
-// ----------------------------------------------------
+                last_scroll_tick = HAL_GetTick();
+            }
+            last_ir_time = current_time;
+        }
+    }
+}
+
+// [3] 블루투스 패킷 파싱 및 명령 실행 (예: [RASP]@LED@RED\n)
 void bluetooth_Event()
 {
-    int i=0;
-    char * pToken;
-    char * pArray[ARR_CNT]={0};
-    char recvBuf[CMD_SIZE]={0};
+    int i = 0;
+    char *pToken;
+    char *pArray[ARR_CNT] = {0};
+    char recvBuf[CMD_SIZE] = {0};
     char *endptr;
-    
+
     strcpy(recvBuf, btData);
     printf("BT Recv: %s\r\n", recvBuf);
 
-    last_bt_recv_tick = HAL_GetTick(); 
+    last_bt_recv_tick = HAL_GetTick();
     is_bt_connected = 1;
 
-    // "[@]" 단위로 패킷 쪼개기
-    pToken = strtok(recvBuf,"[@]\n\r");
-    while(pToken != NULL)
+    // "[@]" 단위로 패킷 분리
+    pToken = strtok(recvBuf, "[@]\n\r");
+    while (pToken != NULL)
     {
         pArray[i] = pToken;
-        if(++i >= ARR_CNT) break;
-        pToken = strtok(NULL,"[@]\n\r");
+        if (++i >= ARR_CNT) break;
+        pToken = strtok(NULL, "[@]\n\r");
     }
 
-    if(pArray[1] != NULL) 
+    if (pArray[1] != NULL)
     {
-        // 💡 1. 센서 데이터 수신 (구조체 배열에 저장)
-        if(!strcmp(pArray[1], "SENSOR") && pArray[2] != NULL)
+        // 센서 데이터 수신 (현재 장치 1개 → 인덱스 0에 저장)
+        if (!strcmp(pArray[1], "SENSOR") && pArray[2] != NULL)
         {
-            // 현재는 장치가 1개라고 가정하므로 인덱스 0에 무조건 저장합니다.
-            // (추후 pArray[0]에 있는 ID를 비교해서 인덱스를 분기하면 여러 장치 대응 가능!)
             sensor_node[0].water = (int)strtol(pArray[2], &endptr, 10);
             sensor_node[0].temp  = (int)strtol(pArray[3], &endptr, 10);
             sensor_node[0].humi  = (int)strtol(pArray[4], &endptr, 10);
             sensor_node[0].sound = (int)strtol(pArray[5], &endptr, 10);
 
-            // 🌟 [추가] 센서 데이터가 파싱까지 완벽히 성공했으므로 센서 정상 갱신!
             last_sensor_recv_tick = HAL_GetTick();
             is_sensor_ok = 1;
-            
-            printf("Node[0] Updated: W:%d T:%d H:%d S:%d\r\n", 
-                   sensor_node[0].water, sensor_node[0].temp, 
+
+            printf("Node[0] Updated: W:%d T:%d H:%d S:%d\r\n",
+                   sensor_node[0].water, sensor_node[0].temp,
                    sensor_node[0].humi, sensor_node[0].sound);
         }
-        // 2. LED 제어 명령
-        else if(!strcmp(pArray[1], "LED") && pArray[2] != NULL)
+        // LED 제어
+        else if (!strcmp(pArray[1], "LED") && pArray[2] != NULL)
         {
             HAL_GPIO_WritePin(RGB_R_GPIO_Port, RGB_R_Pin, GPIO_PIN_RESET);
             HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_RESET);
             HAL_GPIO_WritePin(RGB_B_GPIO_Port, RGB_B_Pin, GPIO_PIN_RESET);
 
-            if(!strcmp(pArray[2], "RED"))   HAL_GPIO_WritePin(RGB_R_GPIO_Port, RGB_R_Pin, GPIO_PIN_SET);
-            if(!strcmp(pArray[2], "GREEN")) HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET);
-            if(!strcmp(pArray[2], "BLUE"))  HAL_GPIO_WritePin(RGB_B_GPIO_Port, RGB_B_Pin, GPIO_PIN_SET);
+            if (!strcmp(pArray[2], "RED"))   HAL_GPIO_WritePin(RGB_R_GPIO_Port, RGB_R_Pin, GPIO_PIN_SET);
+            if (!strcmp(pArray[2], "GREEN")) HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET);
+            if (!strcmp(pArray[2], "BLUE"))  HAL_GPIO_WritePin(RGB_B_GPIO_Port, RGB_B_Pin, GPIO_PIN_SET);
         }
-        // 3. 부저 제어 명령
-        else if(!strcmp(pArray[1], "BUZZER") && pArray[2] != NULL)
+        // 부저 제어
+        else if (!strcmp(pArray[1], "BUZZER") && pArray[2] != NULL)
         {
-            if(!strcmp(pArray[2], "ON")) HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
-            if(!strcmp(pArray[2], "OFF")) HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
+            if (!strcmp(pArray[2], "ON")) HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+            if (!strcmp(pArray[2], "OFF")) HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
         }
-        // 4. 비상 해제 명령 (서버에서 제어)
-        else if(!strcmp(pArray[1], "EMG") && pArray[2] != NULL && !strcmp(pArray[2], "OFF"))
+        // 비상 해제 (서버 제어)
+        else if (!strcmp(pArray[1], "EMG") && pArray[2] != NULL && !strcmp(pArray[2], "OFF"))
         {
-            emg_state = 0; 
+            emg_state = 0;
             HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
             HAL_GPIO_WritePin(RGB_R_GPIO_Port, RGB_R_Pin, GPIO_PIN_RESET);
-            HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET); 
+            HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET);
             printf("Emergency Cleared by Server\r\n");
         }
-        // 5. 시간 동기화
-        else if(!strcmp(pArray[1], "TIME") && pArray[2] != NULL)
+        // 시간 동기화
+        else if (!strcmp(pArray[1], "TIME") && pArray[2] != NULL)
         {
             sscanf(pArray[2], "%d:%d:%d", &sys_hour, &sys_min, &sys_sec);
             printf("Time Synced: %02d:%02d:%02d\r\n", sys_hour, sys_min, sys_sec);
@@ -560,110 +545,91 @@ void bluetooth_Event()
     }
 }
 
-// ----------------------------------------------------
 // [4] 비상 상황 토글 (물리 택트 스위치 전용)
-// ----------------------------------------------------
 void emergency_Trigger()
 {
-    // 🟢 1. 이미 비상 상태(1)일 때 누르면 -> 비상 해제! (OFF)
-    if (emg_state == 1) 
+    // 이미 비상 상태(1)일 때 누르면 → 해제
+    if (emg_state == 1)
     {
-        emg_state = 0; // 상태를 정상으로 되돌림
-        
-        // 부저 끄고, 빨간불 끄기
+        emg_state = 0;
+
         HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
         HAL_GPIO_WritePin(RGB_R_GPIO_Port, RGB_R_Pin, GPIO_PIN_RESET);
-        
-        // 💡 초록색 LED 다시 켜기! (평상시 상태)
         HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_SET);
-        
-        // LCD 복구
+
         LCD_writeStringXY(0,0, "System Restored ");
         LCD_writeStringXY(1,0, "Returning...    ");
-        
-        // 서버로 "락 풀림" 패킷 전송
+
         char emg_packet[] = "[STM32]@EMG@UNLOCK\n";
         HAL_UART_Transmit(&huart6, (uint8_t*)emg_packet, strlen(emg_packet), 100);
-        
+
         printf(">>> EMERGENCY CLEARED (Toggle OFF) <<<\r\n");
     }
-    
-    // 🚨 2. 평상시 상태(0)일 때 누르면 -> 비상 발동! (ON)
-    else 
+    // 평상시 상태(0)일 때 누르면 → 비상 발동
+    else
     {
-        emg_state = 1; // 상태를 비상으로 바꿈
-        
-        // 💡 빨간불 켜고, 초록불 끄기, 부저 켜기
+        emg_state = 1;
+
         HAL_GPIO_WritePin(RGB_R_GPIO_Port, RGB_R_Pin, GPIO_PIN_SET);
         HAL_GPIO_WritePin(RGB_G_GPIO_Port, RGB_G_Pin, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET); 
+        HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
 
-        // LCD 경고
         LCD_writeStringXY(0,0, "[ EMERGENCY ! ] ");
         LCD_writeStringXY(1,0, " SYSTEM LOCKED  ");
 
-        // 서버로 비상 락 패킷 송신
         char emg_packet[] = "[STM32]@EMG@LOCK\n";
         HAL_UART_Transmit(&huart6, (uint8_t*)emg_packet, strlen(emg_packet), 100);
-        
+
         printf("!!! EMERGENCY BUTTON PRESSED (Toggle ON) !!!\r\n");
     }
 }
-// ----------------------------------------------------
-// [5] LCD 디스플레이 업데이트 (리모컨 페이지 전환용)
-// ----------------------------------------------------
+
+// [5] LCD 업데이트 (리모컨 페이지 전환용)
 void update_LCD()
 {
-    // 💡 버퍼는 넉넉하게 32로 잡아서 컴파일 경고(Overflow)를 원천 차단!
-    char lcd_buf[32]; 
+    char lcd_buf[32]; // 컴파일 경고(overflow) 방지용 여유 버퍼
 
     if (menuPage == 1) {
-        // [ 12:34:56 ] 뒤에 공백 4칸을 직접 넣어서 총 16칸을 딱 맞춤
         sprintf(lcd_buf, "[ %02d:%02d:%02d ]    ", sys_hour, sys_min, sys_sec);
         LCD_writeStringXY(0, 0, lcd_buf);
-        
-        // T:25C H:60% 뒤에 공백 5칸을 직접 넣어서 총 16칸 딱 맞춤 (%2d로 숫자 2자리 고정)
+
         sprintf(lcd_buf, "T:%2dC H:%2d%%     ", sensor_node[0].temp, sensor_node[0].humi);
         LCD_writeStringXY(1, 0, lcd_buf);
     }
     else if (menuPage == 2) {
-        // Water Lvl:30 뒤에 공백을 넣어서 16칸 딱 맞춤 (%-3d는 숫자를 왼쪽 정렬로 3칸 차지하게 함)
         sprintf(lcd_buf, "Water Lvl:%-3d   ", sensor_node[0].water);
         LCD_writeStringXY(0, 0, lcd_buf);
-        
-        if(sensor_node[0].sound == 1) {
-            sprintf(lcd_buf, "Sound: DETECTED "); // 딱 16글자
+
+        if (sensor_node[0].sound == 1) {
+            sprintf(lcd_buf, "Sound: DETECTED ");
         } else {
-            sprintf(lcd_buf, "Sound: NORMAL   "); // 딱 16글자 (뒤에 공백 3칸)
+            sprintf(lcd_buf, "Sound: NORMAL   ");
         }
         LCD_writeStringXY(1, 0, lcd_buf);
     }
     else if (menuPage == 3) {
-        // 🌟 1줄: 네트워크(블루투스) 상태 표시
+        // 통신(블루투스) 상태
         if (is_bt_connected) sprintf(lcd_buf, "Network: BT OK  ");
-        else                 sprintf(lcd_buf, "Network: BT ERR!"); // 딱 16칸
+        else                 sprintf(lcd_buf, "Network: BT ERR!");
         LCD_writeStringXY(0, 0, lcd_buf);
-        
-        // 🌟 2줄: 시스템 & 센서 상태 표시
-        if(emg_state == 1) {
+
+        // 시스템 & 센서 상태
+        if (emg_state == 1) {
             sprintf(lcd_buf, "System: LOCKED  ");
-        } 
+        }
         else if (is_sensor_ok == 0) {
-            sprintf(lcd_buf, "System: SENS ERR"); // 센서값 안 들어오면 에러 표시
-        } 
+            sprintf(lcd_buf, "System: SENS ERR");
+        }
         else {
-            sprintf(lcd_buf, "System: READY   "); 
+            sprintf(lcd_buf, "System: READY   ");
         }
         LCD_writeStringXY(1, 0, lcd_buf);
     }
 }
 
-// ----------------------------------------------------
-// [6] printf 리타겟팅 (USART2로 PC에 디버그 메세지 전송)
-// ----------------------------------------------------
+// [6] printf 리타겟팅 (USART2로 PC에 디버그 메시지 전송)
 PUTCHAR_PROTOTYPE
 {
-    // NUCLEO 보드의 ST-LINK 가상 COM 포트인 USART2로 문자열을 보냅니다.
     HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
     return ch;
 }
