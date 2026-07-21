@@ -2,13 +2,18 @@
 
 반려동물 단독 방치 시간이 늘어나면서 발생하는 돌봄 공백 문제를 해결하기 위한 IoT 기반 통합 펫 케어 시스템입니다. 환경 모니터링, 원격 급식, 비상 알림, 실시간 웹 대시보드를 하나로 통합하여 제공합니다.
 
+
+      
+
+      
+
 <table>
   <tr>
     <td align="center">
-      https://github.com/user-attachments/assets/dec2b257-5a87-4198-93cc-e83e209e22f2
+      https://github.com/user-attachments/assets/a1ddd2b9-9b7a-44b0-b045-d2deffbd15f3
     </td>
     <td align="center">
-      https://github.com/user-attachments/assets/6c8bb603-cf40-448c-9c88-7b3a996089fc
+      https://github.com/user-attachments/assets/8d4b9955-3665-4a95-a30e-c3fb9ea78b77
     </td>
   </tr>
 </table>
